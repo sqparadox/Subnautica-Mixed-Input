@@ -27,6 +27,45 @@ namespace MixedInput
     //[HarmonyDebug]
     public static class MixedInput_Patch
     {
+        /*
+        We want to change this:
+        for (int j = 0; j < GameInput.axisValues.Length; j++)
+        {
+            GameInput.AnalogAxis axis = (GameInput.AnalogAxis)j;
+            GameInput.Device deviceForAxis = this.GetDeviceForAxis(axis);
+            float f = GameInput.lastAxisValues[j] - GameInput.axisValues[j];
+            GameInput.lastAxisValues[j] = GameInput.axisValues[j];
+            if (deviceForAxis != GameInput.lastDevice)
+            {
+                float num3 = 0.1f;
+                if (Mathf.Abs(f) > num3)
+                    GameInput.lastDevice = deviceForAxis;
+                else
+                    GameInput.axisValues[j] = 0f;
+            }
+        }
+        To this:
+        if (GameInput.lastDevice != GameInput.Device.Controller)
+            for (int j = 0; j < GameInput.axisValues.Length; j++)
+            {
+                GameInput.AnalogAxis axis = (GameInput.AnalogAxis)j;
+                GameInput.Device deviceForAxis = this.GetDeviceForAxis(axis);
+                float f = GameInput.lastAxisValues[j] - GameInput.axisValues[j];
+                GameInput.lastAxisValues[j] = GameInput.axisValues[j];
+                if (deviceForAxis != GameInput.lastDevice)
+                {
+                    float num3 = 0.1f;
+                    if (Mathf.Abs(f) > num3)
+                        GameInput.lastDevice = deviceForAxis;
+                }
+            }
+        We'll do this with a transpiler to make sure we don't have a performance impact by doing things over again in a Postfix of an update() function
+        This Requires:
+            -Removing 5 code instuctions (the else axis = 0)
+            -Adding 2 code instructions (the if not controller line)
+            -Replacing 1 code instruction (fix the jump that was pointing at the else)
+        */
+        
         static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions, ILGenerator il)
         {
             int ldc_i4_0Passed = 0;
@@ -37,17 +76,17 @@ namespace MixedInput
 
             for (var i = 0; i < codes.Count; i++)
             {
-                //count the loops by looking for int i=0;
+                //Count the loops by looking for int i = 0;
                 if (codes[i].opcode == OpCodes.Ldc_I4_0)
                     ldc_i4_0Passed++;
-                //Once we've hit the 3rd loop, ensure loop is checking axes by checking that call is where expected
+                //Once we've hit the 3rd loop, ensure this loop is checking axes by checking that the call opcode is where expected
                 if (axisCheckLoopStartIndex == -1 && ldc_i4_0Passed == 3 && codes[i + 7].opcode == OpCodes.Call)
                     axisCheckLoopStartIndex = i;
-                //if call is not where expected we aren't in the axis check loop, code has changed abandon transpiler
+                //if call opcode is not where expected, we aren't in the axis check loop, code has changed, abandon transpiler
                 else if (axisCheckLoopStartIndex == -1 && ldc_i4_0Passed == 3 && codes[i + 7].opcode != OpCodes.Call)
                     return instructions;
-                //once we know we are in the axis check loop look for the zeroing of the axis
-                //ensure we are in the right place by checking the opcode at the start of the else
+                //Once we know we are in the axis check loop look for the zeroing of the axis
+                //Ensure we are in the right place by checking the opcode at the start of the else
                 else if (axisCheckLoopStartIndex != -1 && codes[i].opcode == OpCodes.Ldc_R4)
                 {
                     if (codes[i].operand.ToString() == "0" && codes[i - 3].opcode == OpCodes.Br)
