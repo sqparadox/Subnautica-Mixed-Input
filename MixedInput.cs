@@ -65,25 +65,27 @@ namespace MixedInput
             -Adding 2 code instructions (the if not controller line)
             -Replacing 1 code instruction (fix the jump that was pointing at the else)
         */
-        
         static IEnumerable<CodeInstruction> Transpiler(IEnumerable<CodeInstruction> instructions, ILGenerator il)
         {
-            int ldc_i4_0Passed = 0;
+            bool atAxisCheckLoop = false;
             int axisCheckLoopStartIndex = -1;
             int startZeroAxisIndex = -1;
 
             var codes = new List<CodeInstruction>(instructions);
 
-            for (var i = 0; i < codes.Count; i++)
+            //start at 1 to skip first Ldc_I4_0
+            for (var i = 1; i < codes.Count; i++)
             {
-                //Count the loops by looking for int i = 0;
-                if (codes[i].opcode == OpCodes.Ldc_I4_0)
-                    ldc_i4_0Passed++;
-                //Once we've hit the 3rd loop, ensure this loop is checking axes by checking that the call opcode is where expected
-                if (axisCheckLoopStartIndex == -1 && ldc_i4_0Passed == 3 && codes[i + 7].opcode == OpCodes.Call)
+                //Find start of axis check loop int i = 0 preceeded by a float assignment;
+                if (codes[i].opcode == OpCodes.Ldc_I4_0 && codes[i - 1].opcode == OpCodes.Stelem_R4)
+                    atAxisCheckLoop = true;
+                if (!atAxisCheckLoop)
+                    continue;
+                //Once we've hit the axis check loop, ensure loop is checking axes by checking that call is where expected
+                if (axisCheckLoopStartIndex == -1 && codes[i + 7].opcode == OpCodes.Call)
                     axisCheckLoopStartIndex = i;
-                //if call opcode is not where expected, we aren't in the axis check loop, code has changed, abandon transpiler
-                else if (axisCheckLoopStartIndex == -1 && ldc_i4_0Passed == 3 && codes[i + 7].opcode != OpCodes.Call)
+                //If call is not where expected we aren't in the axis check loop, code has changed, abandon transpiler
+                else if (axisCheckLoopStartIndex == -1 && codes[i + 7].opcode != OpCodes.Call)
                     return instructions;
                 //Once we know we are in the axis check loop look for the zeroing of the axis
                 //Ensure we are in the right place by checking the opcode at the start of the else
